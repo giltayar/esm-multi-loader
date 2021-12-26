@@ -5,7 +5,7 @@ import execa from 'execa'
 
 const __dirname = new URL('.', import.meta.url).pathname
 
-describe('babel-register-esm (e2e)', function () {
+describe('esm-multi-loader (e2e)', function () {
   it('should run a file unchanged if no plugins', async () => {
     const result = await executeFileWithLoader('simple', 'nochange.js')
 
@@ -68,7 +68,7 @@ describe('babel-register-esm (e2e)', function () {
 async function executeFileWithLoader(fixture, file) {
   return await execa(
     'node',
-    ['--no-warnings', '--loader', path.resolve(__dirname, '../../src/babel-register-esm.js'), file],
+    ['--no-warnings', '--loader', path.resolve(__dirname, '../../src/esm-multi-loader.js'), file],
     {all: true, cwd: path.resolve(__dirname, 'fixtures', fixture)},
   )
 }
