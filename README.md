@@ -1,13 +1,14 @@
 # esm-multi-loader
 
-An ESM loader for Babel, similar to @babel/register. It will transpile your files on-the-fly, based
-on your "babelrc" configuration files.
+An ESM loader that can chain multiple loaders together. Supports both the old and the new ESM
+loader interface.
+
+A major portion of the code was copied [with permission](https://github.com/targos/multiloader/blob/abc3fedc4201c52c0485c6b8b32cd929c0e1cf8f/LICENSE) from <https://github.com/targos/multiloader/blob/abc3fedc4201c52c0485c6b8b32cd929c0e1cf8f/packages/multiloader-loader/src/loader.js>. It was
+upgraded to support the new version of the ESM loader interface, and was added the ability to
+take the loader configuration from an environment variable
 
 For more information on Node.js ESM loaders,
 see [here](https://nodejs.org/api/esm.html#esm_loaders).
-
-This loader also supports importing `.ts` and `.tsx` files, which in TypeScript needed to
-be referred using their JS name (see [TypeScript](#typescript) section below).
 
 ## Installation
 
@@ -15,29 +16,30 @@ be referred using their JS name (see [TypeScript](#typescript) section below).
 npm install esm-multi-loader
 ```
 
-This package has a peer-dependency on `@babel/core`, so you do need to install it yourself:
-
-```sh
-npm install --save-dev @babel/core
-```
-
 ## Usage
 
-To make on the fly transpilation work, you MUST run Node.js using `--loader esm-multi-loader`.
+To support loading multiple loaders, define an environment variable with the loaders, separated
+by `,`, and add this loader as the loader for Node.js.
 
 Example:
 
 ```js
-// a-file-with-jsx.js
+// a-file-with-jsx-and-esm-mocking.js
 import React from 'react'
+import quibble from 'quibble'
+
+await quibble.esm('./foo.mjs', {a: 42})
 
 console.log((<button>Hi</button>).type)
+
+console.log((await import('./foo.mjs')).a)
 ```
 
-To run it under Node.js, without transpiling it beforehand, you need to run it thus:
+Because it needs the `babel-register-esm` and `quibble` loaders, you need to `npm install` them
+both, and then run it thus with Node.s:
 
 ```shell
-node --loader esm-multi-loader a-file-with-jsx.js
+ESM_MULTI_LOADER=babel-register-esm,quibble node --loader esm-multi-loader a-file-with-jsx-and-esm-mocking.mjs
 ```
 
 Note that in order for this to work, you need the appropriate `babelrc.json` and plugins installed.
@@ -58,48 +60,36 @@ To use it in Mocha, add `loader=esm-multi-loader` to the mocha arguments, e.g.
 mocha --loader=esm-multi-loader some-test.js
 ```
 
-## TypeScript
-
-Since many projects use Babel to transpile TypeScript, this loader deals with a special case
-for TypeScript ESM. When using TypeScriot in ESM projects, when importing a file, and you need
-to specify the extension, you should specify `.js` and not `.ts` or `.tsx`! See
-an example and explanations [here](https://gils-blog.tayar.org/posts/using-jsm-esm-in-nodejs-a-practical-guide-part-3/#section-07).
-
-To deal with this, if you import a `.js` file, where you meant to import `.ts` files
-this loader will try and resolve the non-existant `.js` file to a `.ts` or `.tsx` file (in that
-order).
-
-Example:
-
-```ts
-// imported.ts
-console.log('loading imported.ts')
-
-// importing.ts
-import './imported.js' // yes, `.js` is what *should* be specified as extension!
-
-console.log('loadeing importing.ts')
-```
-
-The above will work, even though `imported.js` does not exist, because this loader
-will also alternatively search for the same file with a `.ts` and `.tsx` extension.
-
-Note that you still have to specify a `.babelrc.json` that transpiles TypeScript and TSX. The loader
-will not transpile this for you. An working example for such a `.babelrc.json` would be:
-
-```json
-{
-  "plugins": [
-    ["@babel/plugin-transform-typescript", {"isTSX": true}],
-    "@babel/plugin-transform-react-jsx"
-  ],
-  "include": ["**/*.ts", "**/*.tsx"]
-}
-```
-
 ## API
 
-There is no API. This is just an ESM loader.
+Instead of loading the loaders via the environment variable, you can instead use
+the `configureLoader` API that is exported by this module, thus:
+
+```js
+// my-loader.mjs
+import loader from './packages/multiloader-loader/src/loader.js';
+export * from './packages/multiloader-loader/src/loader.js';
+
+import * as quibble from 'quibble'
+import * as babelRegisterEsm from 'babel-register-esm'
+
+loader(
+  quibble,
+  babelRegisterEsm,
+);
+```
+
+And use the above file as the loader, thus:
+
+```shell
+node --loader=./my-loader.mjs a-file-with-jsx-and-esm-mocking.mjs
+```
+
+This will achieve the same result as using:
+
+```shell
+ESM_MULTI_LOADER=babel-register-esm,quibble node --loader esm-multi-loader a-file-with-jsx-and-esm-mocking.mjs
+```
 
 ### License
 

@@ -1,156 +1,126 @@
-import path from 'path'
-import {fileURLToPath} from 'url'
-import babel from '@babel/core'
-
-const SUPPORTED_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx']
-
-/**
- * @param {string} specifier
- * @param {{
- *   conditions: !Array<string>,
- *   parentURL: !(string | undefined),
- * }} context
- * @param {Function} defaultResolve
- * @returns {Promise<{ url: string }>}
- */
-export async function resolve(specifier, context, defaultResolve) {
-  try {
-    const x = await defaultResolve(specifier, context, defaultResolve)
-    return x
-  } catch (/**@type {any} */ error) {
-    if (!specifier.startsWith('.') && !specifier.startsWith('/')) throw error
-
-    const extension = path.extname(
-      fileURLToPath(/**@type {import('url').URL}*/ (new URL(specifier, context.parentURL))),
-    )
-
-    if (error.code === 'ERR_MODULE_NOT_FOUND' && extension === '.js') {
-      const specifierUrl = new URL(specifier, context.parentURL)
-      const sameFileButTs = replaceExtension(specifierUrl, '.js', '.ts')
-
-      const resolvedTs = await tryResolve(sameFileButTs)
-      if (resolvedTs) return resolvedTs
-
-      const sameFileButTsx = replaceExtension(specifierUrl, '.js', '.tsx')
-      const resolvedTsx = await tryResolve(sameFileButTsx)
-
-      if (resolvedTsx) return resolvedTsx
-
-      throw error
-    } else {
-      throw error
-    }
-  }
-
-  /**
-   * @param {string} specifier
-   */
-  async function tryResolve(specifier) {
-    try {
-      return await defaultResolve(specifier, context, defaultResolve)
-    } catch (error) {
-      return undefined
-    }
-  }
-}
-/**
- * @param {string} url
- * @param {Object} context
- * @param {Function} defaultGetFormat
- * @returns {Promise<{ format: string }>}
- */
-export async function getFormat(url, context, defaultGetFormat) {
-  const urlUrl = new URL(url)
-
-  if (urlUrl.protocol === 'file:') {
-    const extension = path.extname(fileURLToPath(url))
-
-    if (SUPPORTED_EXTENSIONS.includes(extension)) {
-      return defaultGetFormat(replaceExtension(urlUrl, extension, '.js'), context, defaultGetFormat)
-    }
-  }
-  return defaultGetFormat(url, context, defaultGetFormat)
+const resolveHooks = {
+  name: 'resolve',
+  hooks: /**@type {any[]}*/ ([]),
 }
 
-/**
- *
- * @param {URL} url
- * @param {string} fromExtension
- * @param {string} toExtension
- */
-function replaceExtension(url, fromExtension, toExtension) {
-  url.pathname = url.pathname.slice(0, -fromExtension.length) + toExtension
-
-  return url.href
+const getFormatHooks = {
+  name: 'getFormat',
+  hooks: /**@type {any[]}*/ ([]),
 }
 
-/**
- * @param {!(string | SharedArrayBuffer | Uint8Array)} source
- * @param {{
- *   format: string,
- *   url: string,
- * }} context
- * @param {Function} [defaultTransformSource]
- * @returns {Promise<{ source: !(string | SharedArrayBuffer | Uint8Array) }>}
- */
-export async function transformSource(source, context, defaultTransformSource) {
-  const {url, format} = context
-  if (format !== 'module' && format !== 'commonjs') {
-    if (defaultTransformSource) {
-      return defaultTransformSource(source, context, defaultTransformSource)
-    } else {
-      return {source}
-    }
-  }
-
-  const stringSource =
-    typeof source === 'string'
-      ? source
-      : Buffer.isBuffer(source)
-      ? source.toString('utf-8')
-      : Buffer.from(source).toString('utf-8')
-
-  const sourceCode = (
-    await babel.transformAsync(stringSource, {
-      sourceType: 'module',
-      filename: fileURLToPath(url),
-    })
-  )?.code
-
-  return sourceCode
-    ? {
-        source: sourceCode,
-      }
-    : defaultTransformSource?.(source, context, defaultTransformSource)
+const getSourceHooks = {
+  name: 'getSource',
+  hooks: /**@type {any[]}*/ ([]),
 }
 
-/**
- * @param {string} url
- * @param {{
- *   format: string,
- * }} context
- * @param {Function} defaultLoad
- * @returns {Promise<{ source: !(string | SharedArrayBuffer | Uint8Array), format: string}>}
- */
-export async function load(url, context, defaultLoad) {
-  const {format, source} = await defaultLoad(url, context, defaultLoad).catch(
-    async (/** @type {any} */ error) => {
-      if (error.code === 'ERR_UNKNOWN_FILE_EXTENSION') {
-        return await defaultLoad(url, {...context, format: 'module'}, defaultLoad)
-      } else {
-        throw error
-      }
-    },
+const transformSourceHooks = {
+  name: 'transformSource',
+  hooks: /**@type {any[]}*/ ([]),
+}
+
+const loadHooks = {
+  name: 'load',
+  hooks: /**@type {any[]}*/ ([]),
+}
+
+const hooks = [resolveHooks, getFormatHooks, getSourceHooks, transformSourceHooks, loadHooks]
+
+if (process.env.ESM_MULTI_LOADER) {
+  configureLoader(
+    ...(await Promise.all(process.env.ESM_MULTI_LOADER.split(/[,;]/).map((p) => import(p)))),
   )
+}
 
-  if (source) {
-    const transformed = await transformSource(source, {format, url}, undefined)
-    if (transformed) {
-      return {source: transformed.source, format}
-    } else {
-      return {format, source}
+/**
+ * @param {any[]} loaders
+ */
+export default function configureLoader(...loaders) {
+  for (const loader of loaders) {
+    for (const hook of hooks) {
+      if (loader[hook.name]) {
+        hook.hooks.push(loader[hook.name])
+      }
     }
-  } else {
-    return {format, source}
   }
+}
+
+/**
+ * @param {any} specifier
+ * @param {any} context
+ * @param {(arg0: any, arg1: any, arg2: any) => any} defaultResolve
+ */
+export async function resolve(specifier, context, defaultResolve, index = 0) {
+  if (resolveHooks.hooks[index]) {
+    return resolveHooks.hooks[index](
+      specifier,
+      context,
+      (/** @type {any} */ s, /** @type {any} */ c) => resolve(s, c, defaultResolve, index + 1),
+    )
+  }
+  return defaultResolve(specifier, context, defaultResolve)
+}
+
+/**
+ * @param {any} specifier
+ * @param {any} context
+ * @param {(arg0: any, arg1: any, arg2: any) => any} defaultGetFormat
+ */
+export async function getFormat(specifier, context, defaultGetFormat, index = 0) {
+  if (getFormatHooks.hooks[index]) {
+    return getFormatHooks.hooks[index](
+      specifier,
+      context,
+      (/** @type {any} */ s, /** @type {any} */ c) => getFormat(s, c, defaultGetFormat, index + 1),
+    )
+  }
+  return defaultGetFormat(specifier, context, defaultGetFormat)
+}
+
+/**
+ * @param {any} specifier
+ * @param {any} context
+ * @param {(arg0: any, arg1: any, arg2: any) => any} defaultGetSource
+ */
+export async function getSource(specifier, context, defaultGetSource, index = 0) {
+  if (getSourceHooks.hooks[index]) {
+    return getSourceHooks.hooks[index](
+      specifier,
+      context,
+      (/** @type {any} */ s, /** @type {any} */ c) => getSource(s, c, defaultGetSource, index + 1),
+    )
+  }
+  return defaultGetSource(specifier, context, defaultGetSource)
+}
+
+/**
+ * @param {any} specifier
+ * @param {any} context
+ * @param {(arg0: any, arg1: any, arg2: any) => any} defaultTransformSource
+ */
+export async function transformSource(specifier, context, defaultTransformSource, index = 0) {
+  if (transformSourceHooks.hooks[index]) {
+    return transformSourceHooks.hooks[index](
+      specifier,
+      context,
+      (/** @type {any} */ s, /** @type {any} */ c) =>
+        transformSource(s, c, defaultTransformSource, index + 1),
+    )
+  }
+  return defaultTransformSource(specifier, context, defaultTransformSource)
+}
+
+/**
+ * @param {any} specifier
+ * @param {any} context
+ * @param {(arg0: any, arg1: any, arg2: any) => any} defaultLoad
+ */
+export async function load(specifier, context, defaultLoad, index = 0) {
+  if (loadHooks.hooks[index]) {
+    return loadHooks.hooks[index](
+      specifier,
+      context,
+      (/** @type {any} */ s, /** @type {any} */ c) => load(s, c, defaultLoad, index + 1),
+    )
+  }
+  return defaultLoad(specifier, context, defaultLoad)
 }
