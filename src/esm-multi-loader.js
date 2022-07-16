@@ -47,17 +47,25 @@ export default function configureLoader(...loaders) {
 /**
  * @param {any} specifier
  * @param {any} context
- * @param {(arg0: any, arg1: any, arg2: any) => any} defaultResolve
+ * @param {(arg0: any, arg1: any, arg2: any) => any} nextResolve
  */
-export async function resolve(specifier, context, defaultResolve, index = 0) {
-  if (resolveHooks.hooks[index]) {
-    return resolveHooks.hooks[index](
+export async function resolve(specifier, context, nextResolve) {
+  /** @type {any} */
+  let result = undefined
+
+  for (let i = resolveHooks.hooks.length - 1; i >= 0; i--) {
+    result = await resolveHooks.hooks[i](
       specifier,
       context,
-      (/** @type {any} */ s, /** @type {any} */ c) => resolve(s, c, defaultResolve, index + 1),
+      result ? async () => result : nextResolve,
     )
+
+    if (result.shortCircuit) {
+      break
+    }
   }
-  return defaultResolve(specifier, context, defaultResolve)
+
+  return result
 }
 
 /**
@@ -112,15 +120,19 @@ export async function transformSource(specifier, context, defaultTransformSource
 /**
  * @param {any} specifier
  * @param {any} context
- * @param {(arg0: any, arg1: any, arg2: any) => any} defaultLoad
+ * @param {(arg0: any, arg1: any, arg2?: any) => any} nextLoad
  */
-export async function load(specifier, context, defaultLoad, index = 0) {
-  if (loadHooks.hooks[index]) {
-    return loadHooks.hooks[index](
-      specifier,
-      context,
-      (/** @type {any} */ s, /** @type {any} */ c) => load(s, c, defaultLoad, index + 1),
-    )
+export async function load(specifier, context, nextLoad) {
+  /** @type {any} */
+  let result = undefined
+
+  for (let i = loadHooks.hooks.length - 1; i >= 0; i--) {
+    result = await loadHooks.hooks[i](specifier, context, result ? async () => result : nextLoad)
+
+    if (result.shortCircuit) {
+      break
+    }
   }
-  return defaultLoad(specifier, context, defaultLoad)
+
+  return result
 }
